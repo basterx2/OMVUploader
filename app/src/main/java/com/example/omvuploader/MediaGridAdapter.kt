@@ -1,0 +1,209 @@
+package com.example.omvuploader
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
+import com.example.omvuploader.databinding.ItemMediaGridBinding
+import com.example.omvuploader.databinding.ItemFolderGridBinding
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class MediaGridAdapter(
+    private val onItemClick: (FileItem) -> Unit,
+    private val onDownloadClick: (FileItem) -> Unit
+) : ListAdapter<FileItem, RecyclerView.ViewHolder>(FileItemDiffCallback()) {
+
+    companion object {
+        private const val TYPE_FOLDER = 0
+        private const val TYPE_MEDIA = 1
+    }
+
+    override fun getItemViewType(position: Int): Int {
+        return if (getItem(position).isDirectory) TYPE_FOLDER else TYPE_MEDIA
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        return when (viewType) {
+            TYPE_FOLDER -> {
+                val binding = ItemFolderGridBinding.inflate(
+                    LayoutInflater.from(parent.context),
+                    parent,
+                    false
+                )
+                FolderViewHolder(binding)
+            }
+            else -> {
+                val binding = ItemMediaGridBinding.inflate(
+                    LayoutInflater.from(parent.context),
+                    parent,
+                    false
+                )
+                MediaViewHolder(binding)
+            }
+        }
+    }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        val item = getItem(position)
+        println("MediaGridAdapter: Binding position $position - ${item.name}")
+        when (holder) {
+            is FolderViewHolder -> holder.bind(item)
+            is MediaViewHolder -> holder.bind(item)
+        }
+    }
+
+    inner class FolderViewHolder(
+        private val binding: ItemFolderGridBinding
+    ) : RecyclerView.ViewHolder(binding.root) {
+
+        fun bind(fileItem: FileItem) {
+            binding.folderName.text = fileItem.name
+
+            val fileCount = 0 // Puedes implementar conteo si lo necesitas
+            binding.folderInfo.text = if (fileCount > 0) "$fileCount archivos" else "Carpeta"
+
+            binding.root.setOnClickListener {
+                onItemClick(fileItem)
+            }
+        }
+    }
+
+    inner class MediaViewHolder(
+        private val binding: ItemMediaGridBinding
+    ) : RecyclerView.ViewHolder(binding.root) {
+
+        private var loadJob: Job? = null
+
+        fun bind(fileItem: FileItem) {
+            // Cancelar carga anterior si existe
+            loadJob?.cancel()
+
+            // Mostrar nombre del archivo
+            binding.fileName.text = fileItem.name
+
+            // Determinar tipo de archivo
+            val isVideo = fileItem.name.lowercase().let {
+                it.endsWith(".mp4") || it.endsWith(".avi") ||
+                        it.endsWith(".mkv") || it.endsWith(".mov") ||
+                        it.endsWith(".3gp") || it.endsWith(".webm")
+            }
+
+            val isImage = fileItem.name.lowercase().let {
+                it.endsWith(".jpg") || it.endsWith(".jpeg") ||
+                        it.endsWith(".png") || it.endsWith(".gif") ||
+                        it.endsWith(".bmp") || it.endsWith(".webp")
+            }
+
+            // Mostrar indicador de tipo
+            if (isVideo) {
+                binding.videoIndicator.visibility = View.VISIBLE
+            } else {
+                binding.videoIndicator.visibility = View.GONE
+            }
+
+            // Cargar miniatura
+            if (isImage || isVideo) {
+                loadThumbnail(fileItem)
+            } else {
+                binding.thumbnail.setImageResource(R.drawable.ic_file_placeholder)
+            }
+
+            // Click para ver en pantalla completa
+            binding.root.setOnClickListener {
+                onItemClick(fileItem)
+            }
+
+            // Click largo para descargar
+            binding.root.setOnLongClickListener {
+                onDownloadClick(fileItem)
+                true
+            }
+        }
+
+        private fun loadThumbnail(fileItem: FileItem) {
+            // Mostrar placeholder mientras carga
+            binding.thumbnail.setImageResource(R.drawable.ic_file_placeholder)
+
+            loadJob = CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val credentialsManager = CredentialsManager(binding.root.context)
+                    val credentials = credentialsManager.getCredentials()
+
+                    if (credentials != null) {
+                        val smbManager = SMBManager(
+                            credentials.server,
+                            credentials.username,
+                            credentials.password,
+                            credentials.shareName ?: "RaspberryHDD"
+                        )
+                        smbManager.initialize()
+
+                        // Descargar miniatura pequeña (100KB máximo)
+                        val thumbnailData = smbManager.downloadFileThumbnail(fileItem.path, 100000)
+
+                        if (thumbnailData != null) {
+                            // Opciones de decodificación para muestra reducida
+                            val options = android.graphics.BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            android.graphics.BitmapFactory.decodeByteArray(thumbnailData, 0, thumbnailData.size, options)
+
+                            // Calcular factor de escala
+                            val targetSize = 200 // Tamaño objetivo en píxeles
+                            val scaleFactor = minOf(
+                                options.outWidth / targetSize,
+                                options.outHeight / targetSize
+                            ).coerceAtLeast(1)
+
+                            // Decodificar con escala reducida
+                            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                                inSampleSize = scaleFactor
+                                inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 // Usar menos memoria
+                            }
+
+                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(
+                                thumbnailData,
+                                0,
+                                thumbnailData.size,
+                                decodeOptions
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                if (bitmap != null) {
+                                    binding.thumbnail.setImageBitmap(bitmap)
+                                } else {
+                                    binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
+                                }
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
+                    }
+                }
+            }
+        }
+    }
+
+    private class FileItemDiffCallback : DiffUtil.ItemCallback<FileItem>() {
+        override fun areItemsTheSame(oldItem: FileItem, newItem: FileItem): Boolean {
+            return oldItem.path == newItem.path
+        }
+
+        override fun areContentsTheSame(oldItem: FileItem, newItem: FileItem): Boolean {
+            return oldItem == newItem
+        }
+    }
+}
