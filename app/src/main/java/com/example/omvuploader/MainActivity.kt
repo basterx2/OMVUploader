@@ -27,8 +27,13 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isNotEmpty()) {
-            selectedFiles.clear()
+            // MANTENER las fotos anteriores y AGREGAR las nuevas
             selectedFiles.addAll(uris)
+            // Eliminar duplicados
+            val uniqueFiles = selectedFiles.distinct()
+            selectedFiles.clear()
+            selectedFiles.addAll(uniqueFiles)
+
             adapter.submitList(selectedFiles.toList())
             binding.uploadButton.isEnabled = true
             val count = selectedFiles.size

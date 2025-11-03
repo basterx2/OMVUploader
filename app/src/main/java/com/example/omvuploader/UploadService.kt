@@ -75,12 +75,21 @@ class UploadService : Service() {
                 uris.forEachIndexed { index, uri ->
                     val fileName = getFileName(uri)
 
-                    updateNotification(index + 1, totalFiles, fileName)
+                    // Simular progreso del archivo (0-100%)
+                    for (progress in listOf(0, 25, 50, 75, 100)) {
+                        updateNotification(index + 1, totalFiles, fileName, progress)
+                        if (progress < 100) {
+                            kotlinx.coroutines.delay(200) // Pequeña pausa para mostrar progreso
+                        }
+                    }
 
                     val inputStream = contentResolver.openInputStream(uri)
                     inputStream?.use { stream ->
                         smbManager.uploadFile(stream, fileName, uploadPath)
                     }
+
+                    // Archivo completado al 100%
+                    updateNotification(index + 1, totalFiles, fileName, 100)
                 }
 
                 showCompletionNotification(totalFiles)
@@ -137,12 +146,12 @@ class UploadService : Service() {
             .build()
     }
 
-    private fun updateNotification(current: Int, total: Int, fileName: String) {
+    private fun updateNotification(current: Int, total: Int, fileName: String, fileProgress: Int = 0) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Subiendo archivos")
-            .setContentText("$current/$total: $fileName")
+            .setContentTitle("Subiendo archivos ($current/$total)")
+            .setContentText("$fileName - $fileProgress%")
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setProgress(total, current, false)
+            .setProgress(100, fileProgress, false)
             .setOngoing(true)
             .build()
 
@@ -153,6 +162,7 @@ class UploadService : Service() {
             putExtra("current", current)
             putExtra("total", total)
             putExtra("fileName", fileName)
+            putExtra("fileProgress", fileProgress)
         }
         sendBroadcast(intent)
     }
@@ -166,6 +176,14 @@ class UploadService : Service() {
             .build()
 
         notificationManager.notify(NOTIFICATION_ID, notification)
+
+        // Broadcast de completado
+        val intent = Intent("com.example.omvuploader.UPLOAD_PROGRESS").apply {
+            putExtra("current", 0)
+            putExtra("total", 0)
+            putExtra("fileName", "")
+        }
+        sendBroadcast(intent)
     }
 
     private fun showErrorNotification(error: String?) {

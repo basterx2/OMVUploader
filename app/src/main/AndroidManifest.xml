@@ -25,7 +25,9 @@
 
     <!-- Permisos para notificaciones y servicio en primer plano -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
@@ -62,6 +64,12 @@
             android:parentActivityName=".FolderBrowserActivity"
             android:theme="@style/Theme.AppCompat.NoActionBar"
             android:screenOrientation="portrait"/>
+
+        <service
+            android:name=".UploadService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
 
     </application>
 

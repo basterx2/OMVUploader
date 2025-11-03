@@ -30,14 +30,15 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- Barra de progreso de subida -->
+    <!-- Barra de progreso de subida mejorada -->
     <LinearLayout
         android:id="@+id/uploadProgressBar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="8dp"
-        android:background="#FFF3E0"
+        android:padding="12dp"
+        android:background="#E3F2FD"
+        android:elevation="4dp"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/currentPath"
         app:layout_constraintStart_toStartOf="parent"
@@ -48,15 +49,90 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Subiendo archivos..."
-            android:textSize="12sp"
-            android:textColor="#E65100"/>
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#1565C0"/>
 
-        <ProgressBar
-            android:id="@+id/uploadProgress"
-            style="?android:attr/progressBarStyleHorizontal"
+        <!-- Progreso del archivo actual -->
+        <TextView
+            android:id="@+id/currentFileText"
             android:layout_width="match_parent"
-            android:layout_height="4dp"
-            android:layout_marginTop="4dp"/>
+            android:layout_height="wrap_content"
+            android:text="foto.jpg"
+            android:textSize="12sp"
+            android:textColor="#424242"
+            android:layout_marginTop="4dp"
+            android:maxLines="1"
+            android:ellipsize="middle"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical">
+
+            <ProgressBar
+                android:id="@+id/currentFileProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="8dp"
+                android:progressTint="#42A5F5"
+                android:max="100"/>
+
+            <TextView
+                android:id="@+id/currentFilePercent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0%"
+                android:textSize="11sp"
+                android:textColor="#1565C0"
+                android:layout_marginStart="8dp"
+                android:minWidth="35dp"
+                android:gravity="end"/>
+
+        </LinearLayout>
+
+        <!-- Progreso total -->
+        <TextView
+            android:id="@+id/totalProgressText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Total: 0/0 archivos"
+            android:textSize="12sp"
+            android:textColor="#424242"
+            android:layout_marginTop="8dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical">
+
+            <ProgressBar
+                android:id="@+id/totalProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="8dp"
+                android:progressTint="#1976D2"
+                android:max="100"/>
+
+            <TextView
+                android:id="@+id/totalPercent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0%"
+                android:textSize="11sp"
+                android:textColor="#1565C0"
+                android:textStyle="bold"
+                android:layout_marginStart="8dp"
+                android:minWidth="35dp"
+                android:gravity="end"/>
+
+        </LinearLayout>
 
     </LinearLayout>
 

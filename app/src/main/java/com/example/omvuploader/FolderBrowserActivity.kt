@@ -173,10 +173,7 @@ class FolderBrowserActivity : AppCompatActivity() {
         val intent = Intent(this, MediaViewerActivity::class.java).apply {
             putExtra("FILE_NAME", fileItem.name)
             putExtra("FILE_PATH", fileItem.path)
-            putExtra("IS_VIDEO", fileItem.name.lowercase().let {
-                it.endsWith(".mp4") || it.endsWith(".avi") ||
-                        it.endsWith(".mkv") || it.endsWith(".mov")
-            })
+            putExtra("CURRENT_PATH", currentPath)
         }
         startActivity(intent)
     }

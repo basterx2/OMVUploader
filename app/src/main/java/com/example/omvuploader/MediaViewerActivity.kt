@@ -1,96 +1,49 @@
 package com.example.omvuploader
 
-import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
-import android.widget.MediaController
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.viewpager2.widget.ViewPager2
 import com.example.omvuploader.databinding.ActivityMediaViewerBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
 
 class MediaViewerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMediaViewerBinding
-    private var filePath: String? = null
-    private var isVideo: Boolean = false
-    private var tempFile: File? = null
+    private lateinit var adapter: MediaPagerAdapter
+    private var filesList = mutableListOf<FileItem>()
+    private var currentPosition = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMediaViewerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Obtener datos del intent
+        // Ocultar action bar
+        supportActionBar?.hide()
+
         val fileName = intent.getStringExtra("FILE_NAME") ?: "Archivo"
-        filePath = intent.getStringExtra("FILE_PATH")
-        isVideo = intent.getBooleanExtra("IS_VIDEO", false)
+        val filePath = intent.getStringExtra("FILE_PATH")
+        val currentPath = intent.getStringExtra("CURRENT_PATH") ?: ""
 
-        supportActionBar?.title = fileName
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        binding.fileName.text = fileName
+        binding.closeButton.setOnClickListener { finish() }
 
-        setupUI()
-        loadMedia()
+        loadAllFiles(filePath, currentPath)
     }
 
-    private fun setupUI() {
-        if (isVideo) {
-            binding.imageView.visibility = View.GONE
-            binding.videoView.visibility = View.VISIBLE
-
-            // Configurar controles de video
-            val mediaController = MediaController(this)
-            mediaController.setAnchorView(binding.videoView)
-            binding.videoView.setMediaController(mediaController)
-
-            // Mantener proporción original del video
-            binding.videoView.setOnPreparedListener { mp ->
-                // Ajustar el tamaño del VideoView para mantener la proporción
-                val videoWidth = mp.videoWidth
-                val videoHeight = mp.videoHeight
-                val screenWidth = resources.displayMetrics.widthPixels
-                val screenHeight = resources.displayMetrics.heightPixels
-
-                val videoRatio = videoWidth.toFloat() / videoHeight.toFloat()
-                val screenRatio = screenWidth.toFloat() / screenHeight.toFloat()
-
-                val layoutParams = binding.videoView.layoutParams
-                if (videoRatio > screenRatio) {
-                    // Video es más ancho
-                    layoutParams.width = screenWidth
-                    layoutParams.height = (screenWidth / videoRatio).toInt()
-                } else {
-                    // Video es más alto
-                    layoutParams.height = screenHeight
-                    layoutParams.width = (screenHeight * videoRatio).toInt()
-                }
-                binding.videoView.layoutParams = layoutParams
-            }
-        } else {
-            binding.imageView.visibility = View.VISIBLE
-            binding.videoView.visibility = View.GONE
-        }
-
-        binding.closeButton.setOnClickListener {
-            finish()
-        }
-    }
-
-    private fun loadMedia() {
+    private fun loadAllFiles(selectedFilePath: String?, currentPath: String) {
         binding.progressBar.visibility = View.VISIBLE
-        binding.loadingText.visibility = View.VISIBLE
 
         lifecycleScope.launch {
             try {
                 val credentialsManager = CredentialsManager(this@MediaViewerActivity)
                 val credentials = credentialsManager.getCredentials()
 
-                if (credentials != null && filePath != null) {
+                if (credentials != null) {
                     val smbManager = SMBManager(
                         credentials.server,
                         credentials.username,
@@ -102,11 +55,36 @@ class MediaViewerActivity : AppCompatActivity() {
                         smbManager.initialize()
                     }
 
-                    if (isVideo) {
-                        loadVideo(smbManager)
-                    } else {
-                        loadImage(smbManager)
+                    // Obtener todos los archivos de la carpeta actual
+                    val allFiles = withContext(Dispatchers.IO) {
+                        smbManager.listFiles(currentPath)
                     }
+
+                    // Filtrar solo imágenes y videos
+                    filesList = allFiles.filter { !it.isDirectory && isMediaFile(it.name) }.toMutableList()
+
+                    // Encontrar posición del archivo seleccionado
+                    currentPosition = filesList.indexOfFirst { it.path == selectedFilePath }.coerceAtLeast(0)
+
+                    // Configurar adapter
+                    adapter = MediaPagerAdapter(this@MediaViewerActivity, filesList, smbManager)
+                    binding.viewPager.adapter = adapter
+                    binding.viewPager.setCurrentItem(currentPosition, false)
+
+                    // Actualizar contador
+                    updateCounter(currentPosition)
+
+                    // Listener para cambio de página
+                    binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+                        override fun onPageSelected(position: Int) {
+                            currentPosition = position
+                            updateCounter(position)
+                            binding.fileName.text = filesList[position].name
+                        }
+                    })
+
+                    binding.progressBar.visibility = View.GONE
+                    binding.loadingText.visibility = View.GONE
                 } else {
                     showError("No se pudo cargar el archivo")
                 }
@@ -117,73 +95,18 @@ class MediaViewerActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun loadImage(smbManager: SMBManager) {
-        try {
-            val imageData = withContext(Dispatchers.IO) {
-                smbManager.downloadFile(filePath!!)
-            }
-
-            if (imageData != null) {
-                val bitmap = BitmapFactory.decodeByteArray(imageData, 0, imageData.size)
-                if (bitmap != null) {
-                    withContext(Dispatchers.Main) {
-                        binding.imageView.setImageBitmap(bitmap)
-                        binding.progressBar.visibility = View.GONE
-                        binding.loadingText.visibility = View.GONE
-                    }
-                } else {
-                    showError("No se pudo decodificar la imagen")
-                }
-            } else {
-                showError("No se pudo descargar la imagen")
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            showError("Error al cargar imagen: ${e.message}")
-        }
+    private fun updateCounter(position: Int) {
+        binding.counter.text = "${position + 1}/${filesList.size}"
     }
 
-    private suspend fun loadVideo(smbManager: SMBManager) {
-        try {
-            binding.loadingText.text = "Descargando video..."
-
-            val videoData = withContext(Dispatchers.IO) {
-                smbManager.downloadFile(filePath!!)
-            }
-
-            if (videoData != null) {
-                withContext(Dispatchers.Main) {
-                    binding.loadingText.text = "Preparando reproducción..."
-                }
-
-                // Guardar en archivo temporal
-                tempFile = withContext(Dispatchers.IO) {
-                    val file = File.createTempFile("video", ".mp4", cacheDir)
-                    FileOutputStream(file).use { output ->
-                        output.write(videoData)
-                    }
-                    file
-                }
-
-                withContext(Dispatchers.Main) {
-                    binding.videoView.setVideoURI(Uri.fromFile(tempFile))
-                    binding.videoView.setOnPreparedListener { mp ->
-                        binding.progressBar.visibility = View.GONE
-                        binding.loadingText.visibility = View.GONE
-                        mp.start()
-                    }
-                    binding.videoView.setOnErrorListener { _, what, extra ->
-                        showError("Error al reproducir video: $what, $extra")
-                        true
-                    }
-                }
-            } else {
-                showError("No se pudo descargar el video")
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            showError("Error al cargar video: ${e.message}")
-        }
+    private fun isMediaFile(fileName: String): Boolean {
+        val lower = fileName.lowercase()
+        return lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                lower.endsWith(".png") || lower.endsWith(".gif") ||
+                lower.endsWith(".bmp") || lower.endsWith(".webp") ||
+                lower.endsWith(".mp4") || lower.endsWith(".avi") ||
+                lower.endsWith(".mkv") || lower.endsWith(".mov") ||
+                lower.endsWith(".3gp") || lower.endsWith(".webm")
     }
 
     private fun showError(message: String) {
@@ -192,17 +115,5 @@ class MediaViewerActivity : AppCompatActivity() {
             binding.loadingText.visibility = View.GONE
             Toast.makeText(this@MediaViewerActivity, message, Toast.LENGTH_LONG).show()
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        // Limpiar archivo temporal
-        tempFile?.delete()
-        binding.videoView.stopPlayback()
-    }
-
-    override fun onSupportNavigateUp(): Boolean {
-        finish()
-        return true
     }
 }
