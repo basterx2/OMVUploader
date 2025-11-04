@@ -167,26 +167,23 @@ class SMBManager(
             val smbFile = SmbFile(filePath, context)
             val fileSize = smbFile.length()
 
-            // Si el archivo es muy grande, no intentar crear miniatura
-            if (fileSize > 15_000_000) { // 15MB
-                return null
-            }
-
-            // Descargar solo una porción del archivo para thumbnail
-            smbFile.inputStream.use { input ->
-                // Leer máximo 100KB para generar thumbnail
-                val bufferSize = minOf(100000, fileSize.toInt())
-                val buffer = ByteArray(bufferSize)
-                val bytesRead = input.read(buffer, 0, bufferSize)
-
-                if (bytesRead > 0) {
-                    buffer.copyOf(bytesRead)
-                } else {
-                    null
+            // Si el archivo es muy grande, descargar una porción razonable
+            if (fileSize > 20_000_000) { // 20MB
+                // Para archivos muy grandes, descargar 500KB
+                smbFile.inputStream.use { input ->
+                    val buffer = ByteArray(500000)
+                    val bytesRead = input.read(buffer, 0, 500000)
+                    if (bytesRead > 0) buffer.copyOf(bytesRead) else null
+                }
+            } else {
+                // Para archivos menores a 20MB, descargar completo
+                smbFile.inputStream.use { input ->
+                    input.readBytes()
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            println("SMBManager: Error descargando thumbnail: ${e.message}")
             null
         }
     }

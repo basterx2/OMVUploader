@@ -132,68 +132,75 @@ class MediaGridAdapter(
         }
 
         private fun loadThumbnail(fileItem: FileItem) {
-            // Mostrar placeholder mientras carga
+            // Cancelar carga anterior
+            loadJob?.cancel()
+
+            // Mostrar placeholder
             binding.thumbnail.setImageResource(R.drawable.ic_file_placeholder)
 
             loadJob = CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    val credentialsManager = CredentialsManager(binding.root.context)
-                    val credentials = credentialsManager.getCredentials()
+                    val context = binding.root.context
+                    val credentialsManager = CredentialsManager(context)
+                    val credentials = credentialsManager.getCredentials() ?: return@launch
 
-                    if (credentials != null) {
-                        val smbManager = SMBManager(
-                            credentials.server,
-                            credentials.username,
-                            credentials.password,
-                            credentials.shareName ?: "RaspberryHDD"
-                        )
-                        smbManager.initialize()
+                    // Crear cache directory
+                    val cacheDir = File(context.cacheDir, "thumbnails")
+                    if (!cacheDir.exists()) cacheDir.mkdirs()
 
-                        // Descargar miniatura pequeña (100KB máximo)
-                        val thumbnailData = smbManager.downloadFileThumbnail(fileItem.path, 100000)
+                    // Generar nombre único para cache
+                    val cacheFileName = fileItem.path.hashCode().toString() + ".jpg"
+                    val cacheFile = File(cacheDir, cacheFileName)
 
-                        if (thumbnailData != null) {
-                            // Opciones de decodificación para muestra reducida
-                            val options = android.graphics.BitmapFactory.Options().apply {
-                                inJustDecodeBounds = true
-                            }
-                            android.graphics.BitmapFactory.decodeByteArray(thumbnailData, 0, thumbnailData.size, options)
+                    // Si existe en cache, cargar desde ahí
+                    if (cacheFile.exists()) {
+                        withContext(Dispatchers.Main) {
+                            Glide.with(context)
+                                .load(cacheFile)
+                                .apply(RequestOptions()
+                                    .override(200, 200)
+                                    .centerCrop())
+                                .into(binding.thumbnail)
+                        }
+                        return@launch
+                    }
 
-                            // Calcular factor de escala
-                            val targetSize = 200 // Tamaño objetivo en píxeles
-                            val scaleFactor = minOf(
-                                options.outWidth / targetSize,
-                                options.outHeight / targetSize
-                            ).coerceAtLeast(1)
+                    // Si no existe, descargar y guardar en cache
+                    val smbManager = SMBManager(
+                        credentials.server,
+                        credentials.username,
+                        credentials.password,
+                        credentials.shareName ?: "RaspberryHDD"
+                    )
+                    smbManager.initialize()
 
-                            // Decodificar con escala reducida
-                            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
-                                inSampleSize = scaleFactor
-                                inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 // Usar menos memoria
-                            }
+                    // Descargar thumbnail (archivos completos pequeños o 500KB de grandes)
+                    val thumbnailData = smbManager.downloadFileThumbnail(fileItem.path)
 
-                            val bitmap = android.graphics.BitmapFactory.decodeByteArray(
-                                thumbnailData,
-                                0,
-                                thumbnailData.size,
-                                decodeOptions
-                            )
+                    if (thumbnailData != null && thumbnailData.isNotEmpty()) {
+                        // Guardar en cache
+                        cacheFile.writeBytes(thumbnailData)
 
-                            withContext(Dispatchers.Main) {
-                                if (bitmap != null) {
-                                    binding.thumbnail.setImageBitmap(bitmap)
-                                } else {
-                                    binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
-                                }
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
-                            }
+                        // Cargar con Glide desde cache
+                        withContext(Dispatchers.Main) {
+                            Glide.with(context)
+                                .load(cacheFile)
+                                .apply(RequestOptions()
+                                    .override(200, 200)
+                                    .centerCrop()
+                                    .diskCacheStrategy(DiskCacheStrategy.ALL))
+                                .placeholder(R.drawable.ic_file_placeholder)
+                                .error(android.R.drawable.ic_menu_gallery)
+                                .into(binding.thumbnail)
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
                         }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    println("MediaGridAdapter: Error cargando thumbnail: ${e.message}")
                     withContext(Dispatchers.Main) {
                         binding.thumbnail.setImageResource(android.R.drawable.ic_menu_gallery)
                     }

@@ -16,7 +16,6 @@ import com.example.omvuploader.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.*
 
-
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: UploadViewModel
@@ -62,6 +61,18 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerView()
         setupObservers()
         setupClickListeners()
+        setupFileUploadedReceiver()
+
+        // Solicitar permiso de notificaciones (Android 13+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS))
+            }
+        }
 
         // Verificar permisos básicos
         checkBasicPermissions()
@@ -71,6 +82,43 @@ class MainActivity : AppCompatActivity() {
             showLoginDialog()
         } else {
             viewModel.testConnection()
+        }
+    }
+
+    private fun setupFileUploadedReceiver() {
+        val filter = android.content.IntentFilter("com.example.omvuploader.FILE_UPLOADED")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(fileUploadedReceiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(fileUploadedReceiver, filter)
+        }
+    }
+
+    private val fileUploadedReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            val uriString = intent?.getStringExtra("uri")
+            if (uriString != null) {
+                val uri = android.net.Uri.parse(uriString)
+                // Eliminar de la lista
+                selectedFiles.remove(uri)
+                adapter.submitList(selectedFiles.toList())
+                val count = selectedFiles.size
+                binding.selectedCount.text = if (count > 0) {
+                    "$count archivo${if (count > 1) "s" else ""} pendiente${if (count > 1) "s" else ""}"
+                } else {
+                    "No hay archivos seleccionados"
+                }
+                binding.uploadButton.isEnabled = selectedFiles.isNotEmpty()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(fileUploadedReceiver)
+        } catch (e: Exception) {
+            // Receiver no registrado
         }
     }
 

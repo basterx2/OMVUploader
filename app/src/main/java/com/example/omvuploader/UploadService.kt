@@ -20,6 +20,8 @@ class UploadService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private lateinit var notificationManager: NotificationManager
+    private var uploadJob: Job? = null
+    private var isCancelled = false
 
     companion object {
         private const val CHANNEL_ID = "upload_channel"
@@ -45,13 +47,25 @@ class UploadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val uris = intent?.getParcelableArrayListExtra<Uri>("uris") ?: arrayListOf()
-        val uploadPath = intent?.getStringExtra("uploadPath") ?: ""
+        when (intent?.action) {
+            "CANCEL_UPLOAD" -> {
+                isCancelled = true
+                uploadJob?.cancel()
+                showCancelledNotification()
+                stopForeground(true)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            else -> {
+                val uris = intent?.getParcelableArrayListExtra<Uri>("uris") ?: arrayListOf()
+                val uploadPath = intent?.getStringExtra("uploadPath") ?: ""
 
-        startForeground(NOTIFICATION_ID, createNotification(0, uris.size))
+                startForeground(NOTIFICATION_ID, createNotification(0, uris.size))
 
-        serviceScope.launch {
-            uploadFiles(uris, uploadPath)
+                uploadJob = serviceScope.launch {
+                    uploadFiles(uris, uploadPath)
+                }
+            }
         }
 
         return START_NOT_STICKY
@@ -73,30 +87,45 @@ class UploadService : Service() {
 
                 val totalFiles = uris.size
                 uris.forEachIndexed { index, uri ->
+                    if (isCancelled) {
+                        return@forEachIndexed
+                    }
+
                     val fileName = getFileName(uri)
 
-                    // Simular progreso del archivo (0-100%)
-                    for (progress in listOf(0, 25, 50, 75, 100)) {
+                    // Progreso del archivo en etapas
+                    for (progress in listOf(0, 33, 66, 100)) {
+                        if (isCancelled) break
+
                         updateNotification(index + 1, totalFiles, fileName, progress)
                         if (progress < 100) {
-                            kotlinx.coroutines.delay(200) // Pequeña pausa para mostrar progreso
+                            kotlinx.coroutines.delay(300)
                         }
                     }
 
-                    val inputStream = contentResolver.openInputStream(uri)
-                    inputStream?.use { stream ->
-                        smbManager.uploadFile(stream, fileName, uploadPath)
-                    }
+                    if (!isCancelled) {
+                        val inputStream = contentResolver.openInputStream(uri)
+                        inputStream?.use { stream ->
+                            smbManager.uploadFile(stream, fileName, uploadPath)
+                        }
 
-                    // Archivo completado al 100%
-                    updateNotification(index + 1, totalFiles, fileName, 100)
+                        // Notificar que archivo fue completado
+                        val completeIntent = Intent("com.example.omvuploader.FILE_UPLOADED").apply {
+                            putExtra("uri", uri.toString())
+                        }
+                        sendBroadcast(completeIntent)
+                    }
                 }
 
-                showCompletionNotification(totalFiles)
+                if (!isCancelled) {
+                    showCompletionNotification(totalFiles)
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            showErrorNotification(e.message)
+            if (!isCancelled) {
+                showErrorNotification(e.message)
+            }
         } finally {
             stopForeground(true)
             stopSelf()
@@ -123,36 +152,70 @@ class UploadService : Service() {
                 "Subida de Archivos",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Notificaciones de subida de archivos al servidor"
+                description = "Muestra el progreso de subida de archivos al servidor"
+                setShowBadge(true)
+                enableLights(true)
+                enableVibration(false)
             }
             notificationManager.createNotificationChannel(channel)
         }
     }
 
     private fun createNotification(current: Int, total: Int): android.app.Notification {
-        val intent = Intent(this, MainActivity::class.java)
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val cancelIntent = Intent(this, UploadService::class.java).apply {
+            action = "CANCEL_UPLOAD"
+        }
+        val cancelPendingIntent = PendingIntent.getService(
+            this, 1, cancelIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Subiendo archivos")
-            .setContentText("$current de $total archivos")
+            .setContentTitle("📤 Subiendo archivos")
+            .setContentText("Preparando...")
             .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setProgress(total, current, false)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_delete, "Cancelar", cancelPendingIntent)
             .build()
     }
 
     private fun updateNotification(current: Int, total: Int, fileName: String, fileProgress: Int = 0) {
+        val cancelIntent = Intent(this, UploadService::class.java).apply {
+            action = "CANCEL_UPLOAD"
+        }
+        val cancelPendingIntent = PendingIntent.getService(
+            this, 1, cancelIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val progressText = if (fileProgress > 0) {
+            "$fileName - $fileProgress%\n$current/$total archivos completados"
+        } else {
+            "$fileName\n$current/$total archivos"
+        }
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Subiendo archivos ($current/$total)")
-            .setContentText("$fileName - $fileProgress%")
+            .setContentTitle("📤 Subiendo archivos ($current/$total)")
+            .setContentText(progressText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(progressText))
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setProgress(100, fileProgress, false)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_delete, "Cancelar", cancelPendingIntent)
             .build()
 
         notificationManager.notify(NOTIFICATION_ID, notification)
@@ -169,9 +232,10 @@ class UploadService : Service() {
 
     private fun showCompletionNotification(total: Int) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Subida completada")
+            .setContentTitle("✅ Subida completada")
             .setContentText("$total archivos subidos exitosamente")
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .build()
 
@@ -188,13 +252,34 @@ class UploadService : Service() {
 
     private fun showErrorNotification(error: String?) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Error en subida")
+            .setContentTitle("❌ Error en subida")
             .setContentText(error ?: "Error desconocido")
             .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .build()
 
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun showCancelledNotification() {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("🚫 Subida cancelada")
+            .setContentText("La subida de archivos fue cancelada")
+            .setSmallIcon(android.R.drawable.ic_delete)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(NOTIFICATION_ID, notification)
+
+        // Broadcast de cancelado
+        val intent = Intent("com.example.omvuploader.UPLOAD_PROGRESS").apply {
+            putExtra("current", 0)
+            putExtra("total", 0)
+            putExtra("fileName", "")
+        }
+        sendBroadcast(intent)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
